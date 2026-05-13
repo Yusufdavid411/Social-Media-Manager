@@ -153,7 +153,40 @@ class AuthGate extends StatelessWidget {
         if (user == null) {
           return const LoginScreen(firebaseReady: true);
         }
-        return AppShell(uid: user.uid, firebaseReady: true);
+        return ProfileGate(uid: user.uid);
+      },
+    );
+  }
+}
+
+class ProfileGate extends StatelessWidget {
+  const ProfileGate({super.key, required this.uid});
+
+  final String uid;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SplashScreen();
+        }
+        if (snapshot.hasError) {
+          return AppShell(uid: uid, firebaseReady: true);
+        }
+
+        final data = snapshot.data?.data();
+        final onboardingCompleted = data?['onboardingCompleted'] == true;
+
+        if (!onboardingCompleted) {
+          return OnboardingScreen(uid: uid, firebaseReady: true);
+        }
+
+        return AppShell(uid: uid, firebaseReady: true);
       },
     );
   }
@@ -565,6 +598,120 @@ class SetupNotice extends StatelessWidget {
         style: Theme.of(
           context,
         ).textTheme.bodySmall?.copyWith(color: const Color(0xFF7A4E00)),
+      ),
+    );
+  }
+}
+
+class OnboardingScreen extends StatefulWidget {
+  const OnboardingScreen({
+    super.key,
+    required this.uid,
+    required this.firebaseReady,
+  });
+
+  final String uid;
+  final bool firebaseReady;
+
+  @override
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  bool _isSaving = false;
+
+  Future<void> _finishOnboarding() async {
+    if (!widget.firebaseReady) {
+      AppMessenger.show(
+        'Firebase config is required before onboarding can finish.',
+        kind: SnackBarKind.info,
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(widget.uid).set({
+        'uid': widget.uid,
+        'onboardingCompleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      AppMessenger.show('Setup saved.', kind: SnackBarKind.success);
+    } catch (_) {
+      AppMessenger.show('Unable to finish setup.', kind: SnackBarKind.error);
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppPage(
+      title: 'Get started',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connect publishing accounts',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Facebook and Instagram are first. Meta OAuth will securely connect Pages and Instagram Business accounts through backend functions.',
+                    style: TextStyle(color: Color(0xFF667085)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ConnectAccountActionCard(
+            platform: 'facebook',
+            title: 'Facebook Page',
+            subtitle: 'Required for Facebook publishing.',
+            active: true,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ConnectAccountsScreen(
+                  uid: widget.uid,
+                  firebaseReady: widget.firebaseReady,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ConnectAccountActionCard(
+            platform: 'instagram',
+            title: 'Instagram Business',
+            subtitle:
+                'Requires a Business or Creator account linked to a Facebook Page.',
+            active: true,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ConnectAccountsScreen(
+                  uid: widget.uid,
+                  firebaseReady: widget.firebaseReady,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: _isSaving ? null : _finishOnboarding,
+            icon: const Icon(Icons.check_circle_outline),
+            label: Text(_isSaving ? 'Saving...' : 'Continue to app'),
+          ),
+        ],
       ),
     );
   }
@@ -1248,21 +1395,40 @@ class SettingsScreen extends StatelessWidget {
         children: [
           SectionHeader(title: 'Connected accounts'),
           const SizedBox(height: 8),
-          const AccountConnectionCard(
+          ConnectAccountActionCard(
             platform: 'facebook',
             title: 'Facebook',
+            subtitle: 'Connection flow pending Meta OAuth setup',
             active: true,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ConnectAccountsScreen(
+                  uid: uid,
+                  firebaseReady: firebaseReady,
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
-          const AccountConnectionCard(
+          ConnectAccountActionCard(
             platform: 'instagram',
             title: 'Instagram',
+            subtitle: 'Connection flow pending Meta OAuth setup',
             active: true,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ConnectAccountsScreen(
+                  uid: uid,
+                  firebaseReady: firebaseReady,
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 8),
-          const AccountConnectionCard(
+          const ConnectAccountActionCard(
             platform: 'linkedin',
             title: 'LinkedIn',
+            subtitle: 'Coming soon',
             active: false,
           ),
           const SizedBox(height: 16),
@@ -1279,17 +1445,101 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
-class AccountConnectionCard extends StatelessWidget {
-  const AccountConnectionCard({
+class ConnectAccountsScreen extends StatelessWidget {
+  const ConnectAccountsScreen({
+    super.key,
+    required this.uid,
+    required this.firebaseReady,
+  });
+
+  final String uid;
+  final bool firebaseReady;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppPage(
+      title: 'Connect accounts',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ConnectedAccountsSummary(uid: uid, firebaseReady: firebaseReady),
+          const SizedBox(height: 16),
+          SectionHeader(title: 'Priority platforms'),
+          const SizedBox(height: 8),
+          ConnectAccountActionCard(
+            platform: 'facebook',
+            title: 'Facebook Page',
+            subtitle:
+                'Meta OAuth and Page selection are the next backend step.',
+            active: true,
+            onPressed: () => AppMessenger.show(
+              'Next: add Firebase Functions for Meta OAuth.',
+              kind: SnackBarKind.info,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ConnectAccountActionCard(
+            platform: 'instagram',
+            title: 'Instagram Business',
+            subtitle:
+                'Needs a linked Facebook Page before publishing can work.',
+            active: true,
+            onPressed: () => AppMessenger.show(
+              'Instagram connects after Meta OAuth is wired.',
+              kind: SnackBarKind.info,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionHeader(title: 'Coming soon'),
+          const SizedBox(height: 8),
+          const ConnectAccountActionCard(
+            platform: 'linkedin',
+            title: 'LinkedIn',
+            subtitle: 'Planned after Facebook and Instagram.',
+            active: false,
+          ),
+          const SizedBox(height: 8),
+          const ConnectAccountActionCard(
+            platform: 'x',
+            title: 'X',
+            subtitle: 'Planned after Facebook and Instagram.',
+            active: false,
+          ),
+          const SizedBox(height: 8),
+          const ConnectAccountActionCard(
+            platform: 'tiktok',
+            title: 'TikTok',
+            subtitle: 'Planned after Facebook and Instagram.',
+            active: false,
+          ),
+          const SizedBox(height: 8),
+          const ConnectAccountActionCard(
+            platform: 'youtube',
+            title: 'YouTube',
+            subtitle: 'Planned after Facebook and Instagram.',
+            active: false,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ConnectAccountActionCard extends StatelessWidget {
+  const ConnectAccountActionCard({
     super.key,
     required this.platform,
     required this.title,
+    required this.subtitle,
     required this.active,
+    this.onPressed,
   });
 
   final String platform;
   final String title;
+  final String subtitle;
   final bool active;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1302,17 +1552,10 @@ class AccountConnectionCard extends StatelessWidget {
               : const Color(0xFF98A2B3),
         ),
         title: Text(title, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          active ? 'Connection flow pending Meta OAuth setup' : 'Coming soon',
-        ),
+        subtitle: Text(subtitle),
         trailing: IconButton(
           tooltip: active ? 'Connect' : 'Coming soon',
-          onPressed: active
-              ? () => AppMessenger.show(
-                  'Meta OAuth backend is next.',
-                  kind: SnackBarKind.info,
-                )
-              : null,
+          onPressed: active ? onPressed : null,
           icon: const Icon(Icons.link_outlined),
         ),
       ),
