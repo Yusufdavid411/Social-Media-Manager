@@ -153,40 +153,7 @@ class AuthGate extends StatelessWidget {
         if (user == null) {
           return const LoginScreen(firebaseReady: true);
         }
-        return ProfileGate(uid: user.uid);
-      },
-    );
-  }
-}
-
-class ProfileGate extends StatelessWidget {
-  const ProfileGate({super.key, required this.uid});
-
-  final String uid;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SplashScreen();
-        }
-        if (snapshot.hasError) {
-          return AppShell(uid: uid, firebaseReady: true);
-        }
-
-        final data = snapshot.data?.data();
-        final onboardingCompleted = data?['onboardingCompleted'] == true;
-
-        if (!onboardingCompleted) {
-          return OnboardingScreen(uid: uid, firebaseReady: true);
-        }
-
-        return AppShell(uid: uid, firebaseReady: true);
+        return AppShell(uid: user.uid, firebaseReady: true);
       },
     );
   }
@@ -603,120 +570,6 @@ class SetupNotice extends StatelessWidget {
   }
 }
 
-class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
-}
-
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  bool _isSaving = false;
-
-  Future<void> _finishOnboarding() async {
-    if (!widget.firebaseReady) {
-      AppMessenger.show(
-        'Firebase config is required before onboarding can finish.',
-        kind: SnackBarKind.info,
-      );
-      return;
-    }
-
-    setState(() => _isSaving = true);
-    try {
-      await FirebaseFirestore.instance.collection('users').doc(widget.uid).set({
-        'uid': widget.uid,
-        'onboardingCompleted': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      AppMessenger.show('Setup saved.', kind: SnackBarKind.success);
-    } catch (_) {
-      AppMessenger.show('Unable to finish setup.', kind: SnackBarKind.error);
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AppPage(
-      title: 'Get started',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Connect publishing accounts',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Facebook and Instagram are first. Meta OAuth will securely connect Pages and Instagram Business accounts through backend functions.',
-                    style: TextStyle(color: Color(0xFF667085)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          ConnectAccountActionCard(
-            platform: 'facebook',
-            title: 'Facebook Page',
-            subtitle: 'Required for Facebook publishing.',
-            active: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ConnectAccountsScreen(
-                  uid: widget.uid,
-                  firebaseReady: widget.firebaseReady,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ConnectAccountActionCard(
-            platform: 'instagram',
-            title: 'Instagram Business',
-            subtitle:
-                'Requires a Business or Creator account linked to a Facebook Page.',
-            active: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ConnectAccountsScreen(
-                  uid: widget.uid,
-                  firebaseReady: widget.firebaseReady,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _isSaving ? null : _finishOnboarding,
-            icon: const Icon(Icons.check_circle_outline),
-            label: Text(_isSaving ? 'Saving...' : 'Continue to app'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.uid, required this.firebaseReady});
 
@@ -737,6 +590,14 @@ class _AppShellState extends State<AppShell> {
         uid: widget.uid,
         firebaseReady: widget.firebaseReady,
         onCompose: () => setState(() => _index = 1),
+        onConnectAccounts: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ConnectAccountsScreen(
+              uid: widget.uid,
+              firebaseReady: widget.firebaseReady,
+            ),
+          ),
+        ),
       ),
       ComposeScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
       CalendarScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
@@ -782,17 +643,88 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.uid,
     required this.firebaseReady,
     required this.onCompose,
+    required this.onConnectAccounts,
   });
 
   final String uid;
   final bool firebaseReady;
   final VoidCallback onCompose;
+  final VoidCallback onConnectAccounts;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _promptChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showConnectPrompt());
+  }
+
+  Future<void> _showConnectPrompt() async {
+    if (_promptChecked || !mounted || !widget.firebaseReady) return;
+    _promptChecked = true;
+
+    try {
+      final userRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid);
+      final profile = await userRef.get();
+      final skippedPrompt = profile.data()?['connectPromptSkipped'] == true;
+      final accounts = await userRef
+          .collection('socialAccounts')
+          .limit(1)
+          .get();
+
+      if (!mounted || skippedPrompt || accounts.docs.isNotEmpty) return;
+
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Connect social accounts'),
+            content: const Text(
+              'Connect Facebook or Instagram to start publishing real posts. You can also skip this for now.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await userRef.set({
+                    'connectPromptSkipped': true,
+                    'connectPromptSkippedAt': FieldValue.serverTimestamp(),
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  }, SetOptions(merge: true));
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+                child: const Text('Skip'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  widget.onConnectAccounts();
+                },
+                child: const Text('Connect'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+      AppMessenger.show(
+        'Unable to check connected accounts.',
+        kind: SnackBarKind.error,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -801,26 +733,32 @@ class HomeScreen extends StatelessWidget {
       actions: [
         IconButton(
           tooltip: 'New post',
-          onPressed: onCompose,
+          onPressed: widget.onCompose,
           icon: const Icon(Icons.add_box_outlined),
         ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          WelcomeHeader(onCompose: onCompose),
+          WelcomeHeader(onCompose: widget.onCompose),
           const SizedBox(height: 16),
-          ConnectedAccountsSummary(uid: uid, firebaseReady: firebaseReady),
+          ConnectedAccountsSummary(
+            uid: widget.uid,
+            firebaseReady: widget.firebaseReady,
+          ),
           const SizedBox(height: 16),
-          PostCounts(uid: uid, firebaseReady: firebaseReady),
+          PostCounts(uid: widget.uid, firebaseReady: widget.firebaseReady),
           const SizedBox(height: 16),
           SectionHeader(title: 'Upcoming'),
           const SizedBox(height: 8),
-          ScheduledPostsList(uid: uid, firebaseReady: firebaseReady),
+          ScheduledPostsList(
+            uid: widget.uid,
+            firebaseReady: widget.firebaseReady,
+          ),
           const SizedBox(height: 16),
           SectionHeader(title: 'Recent posts'),
           const SizedBox(height: 8),
-          RecentPostsList(uid: uid, firebaseReady: firebaseReady),
+          RecentPostsList(uid: widget.uid, firebaseReady: widget.firebaseReady),
         ],
       ),
     );
