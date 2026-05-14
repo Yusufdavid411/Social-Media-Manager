@@ -1,52 +1,70 @@
 # Social Media Manager
 
-Android-first Flutter app for managing real social posts, drafts, schedules,
-connected accounts, and analytics.
+Professional social media scheduling and publishing platform.
 
-## Current Scope
+This app is not a permanent media host. Uploaded media is temporary content used
+for previewing, editing, scheduling, publishing, and retrying failed publishing.
+After a post publishes successfully, media and large temporary post payloads are
+retained for 15 days, then removed automatically while lightweight calendar and
+analytics history remains.
 
-- Flutter Android app using package `com.social_media_manager`
-- Firebase-ready authentication flow
-- Firestore-ready user and post data model
-- Mobile-first Home, Compose, Calendar, Analytics, and Settings screens
-- Facebook and Instagram prioritized across the UI
-- No fake dashboard posts or hardcoded metrics
-- Cloudinary and Meta integration placeholders for the next build phase
-
-## Requirements
-
-- Flutter SDK
-- Android Studio or Android SDK
-- Firebase project config for Android
-
-## Getting Started
-
-```sh
-flutter pub get
-flutter analyze
-flutter test
-flutter run -d <android-device-id>
-```
-
-## Firebase Setup
-
-Add the Android Firebase config file to:
+## Monorepo
 
 ```text
-android/app/google-services.json
+apps/
+  api/      NestJS backend, Prisma, queues, storage, publishing workers
+  mobile/   Flutter Android-first mobile app
 ```
 
-The target Firebase project from the handoff is:
+## Backend Direction
 
-- Project ID: `social-media-manager-e07a6`
-- Android package: `com.social_media_manager`
+- NestJS modular API
+- PostgreSQL with Prisma ORM
+- Redis + BullMQ for publishing and cleanup jobs
+- MinIO S3-compatible storage in production
+- Local disk storage for development/testing
+- Signed upload URLs
+- Workspace-based access control
+- Billing and AI modules from the beginning
+- Daily retention cleanup worker
 
-## Next Build Phase
+## Local Services
 
-- Wire FlutterFire Android config
-- Enable real Firebase Auth and Firestore writes on device
-- Add Cloudinary signed upload through Firebase Cloud Functions
-- Add Meta OAuth connection flow
-- Implement Facebook Page publishing
-- Implement Instagram Business publishing
-- Add scheduled publishing worker
+```sh
+docker compose up -d postgres redis minio
+```
+
+MinIO console:
+
+```text
+http://localhost:9001
+```
+
+Default development credentials:
+
+```text
+minioadmin / minioadmin
+```
+
+## API
+
+```sh
+npm install
+npm run api:prisma:generate
+npm run api:build
+npm run api:dev
+```
+
+Copy `apps/api/.env.example` to `apps/api/.env` for local development.
+
+## Mobile
+
+```sh
+cd apps/mobile
+C:\src\flutter\bin\flutter.bat pub get
+C:\src\flutter\bin\flutter.bat analyze
+C:\src\flutter\bin\flutter.bat test
+```
+
+The mobile app is currently the Android-first shell. It will be reconnected to
+the NestJS API as the backend modules become available.
