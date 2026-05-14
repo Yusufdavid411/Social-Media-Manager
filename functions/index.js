@@ -7,10 +7,18 @@ const { defineSecret } = require("firebase-functions/params");
 
 initializeApp();
 
+const cloudinaryCloudName = defineSecret("CLOUDINARY_CLOUD_NAME");
+const cloudinaryApiKey = defineSecret("CLOUDINARY_API_KEY");
 const cloudinaryApiSecret = defineSecret("CLOUDINARY_API_SECRET");
 
 exports.createCloudinaryUploadSignature = onCall(
-  { secrets: [cloudinaryApiSecret] },
+  {
+    secrets: [
+      cloudinaryCloudName,
+      cloudinaryApiKey,
+      cloudinaryApiSecret,
+    ],
+  },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError(
@@ -19,8 +27,8 @@ exports.createCloudinaryUploadSignature = onCall(
       );
     }
 
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const cloudName = cloudinaryCloudName.value();
+    const apiKey = cloudinaryApiKey.value();
     const apiSecret = cloudinaryApiSecret.value();
 
     if (!cloudName || !apiKey || !apiSecret) {
