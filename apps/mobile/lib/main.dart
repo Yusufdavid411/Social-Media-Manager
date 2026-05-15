@@ -1,40 +1,31 @@
-import 'dart:async';
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final firebaseStatus = await FirebaseBootstrap.initialize();
-  runApp(SocialMediaManagerApp(firebaseStatus: firebaseStatus));
+void main() {
+  runApp(const SocialMediaManagerApp());
 }
 
-class FirebaseBootstrap {
-  const FirebaseBootstrap({required this.isReady, this.error});
+class SocialMediaManagerApp extends StatefulWidget {
+  const SocialMediaManagerApp({super.key});
 
-  final bool isReady;
-  final Object? error;
+  @override
+  State<SocialMediaManagerApp> createState() => _SocialMediaManagerAppState();
+}
 
-  static Future<FirebaseBootstrap> initialize() async {
-    try {
-      await Firebase.initializeApp();
-      return const FirebaseBootstrap(isReady: true);
-    } catch (error) {
-      return FirebaseBootstrap(isReady: false, error: error);
-    }
+class _SocialMediaManagerAppState extends State<SocialMediaManagerApp> {
+  AppSession? _session;
+
+  void _startSession(AppSession session) {
+    setState(() => _session = session);
   }
-}
 
-class SocialMediaManagerApp extends StatelessWidget {
-  const SocialMediaManagerApp({super.key, required this.firebaseStatus});
-
-  final FirebaseBootstrap firebaseStatus;
+  void _endSession() {
+    setState(() => _session = null);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +44,6 @@ class SocialMediaManagerApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: colorScheme,
         scaffoldBackgroundColor: const Color(0xFFF7F8FA),
-        fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
           centerTitle: false,
           elevation: 0,
@@ -99,9 +89,25 @@ class SocialMediaManagerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: AuthGate(firebaseStatus: firebaseStatus),
+      home: _session == null
+          ? LoginScreen(onAuthenticated: _startSession)
+          : AppShell(session: _session!, onLogout: _endSession),
     );
   }
+}
+
+class AppSession {
+  const AppSession({
+    required this.userId,
+    required this.email,
+    required this.workspaceId,
+    required this.workspaceName,
+  });
+
+  final String userId;
+  final String email;
+  final String workspaceId;
+  final String workspaceName;
 }
 
 class AppMessenger {
@@ -129,72 +135,10 @@ class AppMessenger {
 
 enum SnackBarKind { success, error, info }
 
-class AuthGate extends StatelessWidget {
-  const AuthGate({super.key, required this.firebaseStatus});
-
-  final FirebaseBootstrap firebaseStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!firebaseStatus.isReady) {
-      return LoginScreen(
-        firebaseReady: false,
-        firebaseError: firebaseStatus.error,
-      );
-    }
-
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SplashScreen();
-        }
-        final user = snapshot.data;
-        if (user == null) {
-          return const LoginScreen(firebaseReady: true);
-        }
-        return AppShell(uid: user.uid, firebaseReady: true);
-      },
-    );
-  }
-}
-
-class SplashScreen extends StatelessWidget {
-  const SplashScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.hub_rounded, size: 48, color: Color(0xFF1877F2)),
-              SizedBox(height: 16),
-              Text(
-                'Social Media Manager',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-              ),
-              SizedBox(height: 16),
-              CircularProgressIndicator(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({
-    super.key,
-    required this.firebaseReady,
-    this.firebaseError,
-  });
+  const LoginScreen({super.key, required this.onAuthenticated});
 
-  final bool firebaseReady;
-  final Object? firebaseError;
+  final ValueChanged<AppSession> onAuthenticated;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -203,7 +147,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
-  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -212,41 +155,33 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _login() async {
-    if (!widget.firebaseReady) {
-      AppMessenger.show(
-        'Add Firebase Android config to enable login.',
-        kind: SnackBarKind.info,
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-    } on FirebaseAuthException catch (error) {
-      AppMessenger.show(
-        error.message ?? 'Unable to log in.',
-        kind: SnackBarKind.error,
-      );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  void _previewLogin() {
+    widget.onAuthenticated(
+      AppSession(
+        userId: 'api-preview-user',
+        email: _email.text.trim().isEmpty
+            ? 'preview@socialmanager.local'
+            : _email.text.trim(),
+        workspaceId: 'api-preview-workspace',
+        workspaceName: 'Personal Workspace',
+      ),
+    );
+    AppMessenger.show(
+      'Preview session started. API auth wiring is next.',
+      kind: SnackBarKind.info,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return AuthFrame(
       title: 'Welcome back',
-      subtitle: 'Manage real posts, schedules, and account connections.',
-      firebaseReady: widget.firebaseReady,
-      firebaseError: widget.firebaseError,
+      subtitle: 'The mobile app is ready for the NestJS API auth connection.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const BackendNotice(),
+          const SizedBox(height: 16),
           TextField(
             controller: _email,
             keyboardType: TextInputType.emailAddress,
@@ -260,21 +195,13 @@ class _LoginScreenState extends State<LoginScreen> {
             decoration: const InputDecoration(labelText: 'Password'),
           ),
           const SizedBox(height: 18),
-          FilledButton(
-            onPressed: _isLoading ? null : _login,
-            child: _isLoading
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Log in'),
-          ),
+          FilledButton(onPressed: _previewLogin, child: const Text('Log in')),
           const SizedBox(height: 10),
           TextButton(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) =>
-                    RegisterScreen(firebaseReady: widget.firebaseReady),
+                    RegisterScreen(onAuthenticated: widget.onAuthenticated),
               ),
             ),
             child: const Text('Create account'),
@@ -282,27 +209,11 @@ class _LoginScreenState extends State<LoginScreen> {
           TextButton(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
-                builder: (_) =>
-                    ForgotPasswordScreen(firebaseReady: widget.firebaseReady),
+                builder: (_) => const ForgotPasswordScreen(),
               ),
             ),
             child: const Text('Forgot password?'),
           ),
-          if (!widget.firebaseReady && kDebugMode) ...[
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).pushReplacement(
-                MaterialPageRoute<void>(
-                  builder: (_) => const AppShell(
-                    uid: 'debug-preview',
-                    firebaseReady: false,
-                  ),
-                ),
-              ),
-              icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Preview empty app shell'),
-            ),
-          ],
         ],
       ),
     );
@@ -310,9 +221,9 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key, required this.firebaseReady});
+  const RegisterScreen({super.key, required this.onAuthenticated});
 
-  final bool firebaseReady;
+  final ValueChanged<AppSession> onAuthenticated;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -322,7 +233,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
-  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -332,53 +242,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  Future<void> _register() async {
-    if (!widget.firebaseReady) {
-      AppMessenger.show(
-        'Firebase config is required before registration.',
-        kind: SnackBarKind.info,
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    try {
-      final credential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-            email: _email.text.trim(),
-            password: _password.text,
-          );
-      final user = credential.user;
-      if (user != null) {
-        await user.updateDisplayName(_name.text.trim());
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid': user.uid,
-          'displayName': _name.text.trim(),
-          'email': _email.text.trim(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-          'onboardingCompleted': false,
-        });
-      }
-    } on FirebaseAuthException catch (error) {
-      AppMessenger.show(
-        error.message ?? 'Unable to create account.',
-        kind: SnackBarKind.error,
-      );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  void _previewRegister() {
+    widget.onAuthenticated(
+      AppSession(
+        userId: 'api-preview-user',
+        email: _email.text.trim().isEmpty
+            ? 'preview@socialmanager.local'
+            : _email.text.trim(),
+        workspaceId: 'api-preview-workspace',
+        workspaceName: 'Personal Workspace',
+      ),
+    );
+    Navigator.of(context).pop();
+    AppMessenger.show(
+      'Preview account opened. Real registration will call the NestJS API.',
+      kind: SnackBarKind.info,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return AuthFrame(
       title: 'Create account',
-      subtitle: 'Start by setting up a real Firebase-backed profile.',
-      firebaseReady: widget.firebaseReady,
+      subtitle: 'Next we will connect this form to PostgreSQL-backed auth.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const BackendNotice(),
+          const SizedBox(height: 16),
           TextField(
             controller: _name,
             decoration: const InputDecoration(labelText: 'Full name'),
@@ -397,13 +288,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 18),
           FilledButton(
-            onPressed: _isLoading ? null : _register,
-            child: _isLoading
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Register'),
+            onPressed: _previewRegister,
+            child: const Text('Register'),
           ),
         ],
       ),
@@ -411,55 +297,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key, required this.firebaseReady});
-
-  final bool firebaseReady;
-
-  @override
-  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
-}
-
-class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
-  final _email = TextEditingController();
-
-  @override
-  void dispose() {
-    _email.dispose();
-    super.dispose();
-  }
-
-  Future<void> _sendReset() async {
-    if (!widget.firebaseReady) {
-      AppMessenger.show(
-        'Firebase config is required before password reset.',
-        kind: SnackBarKind.info,
-      );
-      return;
-    }
-    await FirebaseAuth.instance.sendPasswordResetEmail(
-      email: _email.text.trim(),
-    );
-    AppMessenger.show('Password reset email sent.', kind: SnackBarKind.success);
-  }
+class ForgotPasswordScreen extends StatelessWidget {
+  const ForgotPasswordScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return AuthFrame(
       title: 'Reset password',
-      subtitle: 'Enter your email to receive a reset link.',
-      firebaseReady: widget.firebaseReady,
+      subtitle: 'Password reset will be added to the NestJS auth module.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
-            controller: _email,
+          const BackendNotice(),
+          const SizedBox(height: 16),
+          const TextField(
             keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Email'),
+            decoration: InputDecoration(labelText: 'Email'),
           ),
           const SizedBox(height: 18),
           FilledButton(
-            onPressed: _sendReset,
+            onPressed: () => AppMessenger.show(
+              'Password reset API is coming after auth tokens.',
+              kind: SnackBarKind.info,
+            ),
             child: const Text('Send reset link'),
           ),
         ],
@@ -474,15 +334,11 @@ class AuthFrame extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
-    required this.firebaseReady,
-    this.firebaseError,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
-  final bool firebaseReady;
-  final Object? firebaseError;
 
   @override
   Widget build(BuildContext context) {
@@ -529,10 +385,6 @@ class AuthFrame extends StatelessWidget {
                       subtitle,
                       style: const TextStyle(color: Color(0xFF667085)),
                     ),
-                    if (!firebaseReady) ...[
-                      const SizedBox(height: 16),
-                      SetupNotice(error: firebaseError),
-                    ],
                     const SizedBox(height: 24),
                     child,
                   ],
@@ -546,35 +398,33 @@ class AuthFrame extends StatelessWidget {
   }
 }
 
-class SetupNotice extends StatelessWidget {
-  const SetupNotice({super.key, this.error});
-
-  final Object? error;
+class BackendNotice extends StatelessWidget {
+  const BackendNotice({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7E8),
+        color: const Color(0xFFEAF2FF),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFFEC84B)),
+        border: Border.all(color: const Color(0xFFB2CCFF)),
       ),
       child: Text(
-        'Firebase Android config is not active yet. Add google-services.json and run FlutterFire configuration to enable auth and Firestore.',
+        'Firebase has been removed from the mobile app. These screens are ready to connect to the NestJS/PostgreSQL API.',
         style: Theme.of(
           context,
-        ).textTheme.bodySmall?.copyWith(color: const Color(0xFF7A4E00)),
+        ).textTheme.bodySmall?.copyWith(color: const Color(0xFF1849A9)),
       ),
     );
   }
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.uid, required this.firebaseReady});
+  const AppShell({super.key, required this.session, required this.onLogout});
 
-  final String uid;
-  final bool firebaseReady;
+  final AppSession session;
+  final VoidCallback onLogout;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -582,27 +432,66 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _index = 0;
+  final List<PostPreview> _posts = [];
+  bool _connectPromptDismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showConnectPrompt());
+  }
+
+  void _showConnectPrompt() {
+    if (_connectPromptDismissed || !mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Connect social accounts'),
+          content: const Text(
+            'Connect Facebook or Instagram to start publishing real posts. You can also skip this for now.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _connectPromptDismissed = true;
+                Navigator.of(context).pop();
+              },
+              child: const Text('Skip'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                setState(() => _index = 4);
+              },
+              child: const Text('Connect'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _addPost(PostPreview post) {
+    setState(() => _posts.insert(0, post));
+    AppMessenger.show(
+      'Post saved locally for preview.',
+      kind: SnackBarKind.success,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
       HomeScreen(
-        uid: widget.uid,
-        firebaseReady: widget.firebaseReady,
+        session: widget.session,
+        posts: _posts,
         onCompose: () => setState(() => _index = 1),
-        onConnectAccounts: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => ConnectAccountsScreen(
-              uid: widget.uid,
-              firebaseReady: widget.firebaseReady,
-            ),
-          ),
-        ),
       ),
-      ComposeScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
-      CalendarScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
-      AnalyticsScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
-      SettingsScreen(uid: widget.uid, firebaseReady: widget.firebaseReady),
+      ComposeScreen(onSave: _addPost),
+      CalendarScreen(posts: _posts),
+      AnalyticsScreen(posts: _posts),
+      SettingsScreen(session: widget.session, onLogout: widget.onLogout),
     ];
 
     return Scaffold(
@@ -643,88 +532,33 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-    required this.onCompose,
-    required this.onConnectAccounts,
+class PostPreview {
+  const PostPreview({
+    required this.caption,
+    required this.platforms,
+    required this.status,
+    this.imagePath,
+    this.scheduledAt,
   });
 
-  final String uid;
-  final bool firebaseReady;
-  final VoidCallback onCompose;
-  final VoidCallback onConnectAccounts;
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  final String caption;
+  final List<String> platforms;
+  final String status;
+  final String? imagePath;
+  final DateTime? scheduledAt;
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  bool _promptChecked = false;
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({
+    super.key,
+    required this.session,
+    required this.posts,
+    required this.onCompose,
+  });
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showConnectPrompt());
-  }
-
-  Future<void> _showConnectPrompt() async {
-    if (_promptChecked || !mounted || !widget.firebaseReady) return;
-    _promptChecked = true;
-
-    try {
-      final userRef = FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.uid);
-      final profile = await userRef.get();
-      final skippedPrompt = profile.data()?['connectPromptSkipped'] == true;
-      final accounts = await userRef
-          .collection('socialAccounts')
-          .limit(1)
-          .get();
-
-      if (!mounted || skippedPrompt || accounts.docs.isNotEmpty) return;
-
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('Connect social accounts'),
-            content: const Text(
-              'Connect Facebook or Instagram to start publishing real posts. You can also skip this for now.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  await userRef.set({
-                    'connectPromptSkipped': true,
-                    'connectPromptSkippedAt': FieldValue.serverTimestamp(),
-                    'updatedAt': FieldValue.serverTimestamp(),
-                  }, SetOptions(merge: true));
-                  if (context.mounted) Navigator.of(context).pop();
-                },
-                child: const Text('Skip'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  widget.onConnectAccounts();
-                },
-                child: const Text('Connect'),
-              ),
-            ],
-          );
-        },
-      );
-    } catch (_) {
-      AppMessenger.show(
-        'Unable to check connected accounts.',
-        kind: SnackBarKind.error,
-      );
-    }
-  }
+  final AppSession session;
+  final List<PostPreview> posts;
+  final VoidCallback onCompose;
 
   @override
   Widget build(BuildContext context) {
@@ -733,32 +567,44 @@ class _HomeScreenState extends State<HomeScreen> {
       actions: [
         IconButton(
           tooltip: 'New post',
-          onPressed: widget.onCompose,
+          onPressed: onCompose,
           icon: const Icon(Icons.add_box_outlined),
         ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          WelcomeHeader(onCompose: widget.onCompose),
+          WelcomeHeader(session: session, onCompose: onCompose),
           const SizedBox(height: 16),
-          ConnectedAccountsSummary(
-            uid: widget.uid,
-            firebaseReady: widget.firebaseReady,
+          const EmptyState(
+            message:
+                'No connected accounts yet. Connect Facebook or Instagram to start publishing.',
           ),
           const SizedBox(height: 16),
-          PostCounts(uid: widget.uid, firebaseReady: widget.firebaseReady),
+          CountGrid(
+            counts: {
+              'Posts': posts.length,
+              'Drafts': posts.where((post) => post.status == 'draft').length,
+              'Scheduled': posts
+                  .where((post) => post.status == 'scheduled')
+                  .length,
+              'Failed': posts.where((post) => post.status == 'failed').length,
+            },
+          ),
           const SizedBox(height: 16),
           SectionHeader(title: 'Upcoming'),
           const SizedBox(height: 8),
-          ScheduledPostsList(
-            uid: widget.uid,
-            firebaseReady: widget.firebaseReady,
+          PostList(
+            posts: posts.where((post) => post.status == 'scheduled').toList(),
+            emptyMessage: 'No scheduled posts yet.',
           ),
           const SizedBox(height: 16),
           SectionHeader(title: 'Recent posts'),
           const SizedBox(height: 8),
-          RecentPostsList(uid: widget.uid, firebaseReady: widget.firebaseReady),
+          PostList(
+            posts: posts,
+            emptyMessage: 'No posts yet. Create your first post.',
+          ),
         ],
       ),
     );
@@ -766,8 +612,13 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class WelcomeHeader extends StatelessWidget {
-  const WelcomeHeader({super.key, required this.onCompose});
+  const WelcomeHeader({
+    super.key,
+    required this.session,
+    required this.onCompose,
+  });
 
+  final AppSession session;
   final VoidCallback onCompose;
 
   @override
@@ -785,9 +636,9 @@ class WelcomeHeader extends StatelessWidget {
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Connect Facebook and Instagram, then create your first real post.',
-              style: TextStyle(color: Color(0xFF667085)),
+            Text(
+              session.workspaceName,
+              style: const TextStyle(color: Color(0xFF667085)),
             ),
             const SizedBox(height: 14),
             FilledButton.icon(
@@ -802,229 +653,10 @@ class WelcomeHeader extends StatelessWidget {
   }
 }
 
-class ConnectedAccountsSummary extends StatelessWidget {
-  const ConnectedAccountsSummary({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!firebaseReady) {
-      return const EmptyState(
-        message: 'Connect Facebook or Instagram to start publishing.',
-      );
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('socialAccounts')
-          .snapshots(),
-      builder: (context, snapshot) {
-        final accounts = snapshot.data?.docs ?? [];
-        if (accounts.isEmpty) {
-          return const EmptyState(message: 'No connected accounts yet.');
-        }
-
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: accounts.map((doc) {
-                final data = doc.data();
-                return Chip(
-                  avatar: Icon(
-                    platformIcon(data['platform'] as String? ?? ''),
-                    size: 18,
-                  ),
-                  label: Text(
-                    data['displayName'] as String? ?? doc.id,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class PostCounts extends StatelessWidget {
-  const PostCounts({super.key, required this.uid, required this.firebaseReady});
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!firebaseReady) {
-      return const CountGrid(
-        counts: {'Posts': 0, 'Drafts': 0, 'Scheduled': 0, 'Failed': 0},
-      );
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('posts')
-          .snapshots(),
-      builder: (context, snapshot) {
-        final docs = snapshot.data?.docs ?? [];
-        final counts = {
-          'Posts': docs.length,
-          'Drafts': docs.where((doc) => doc.data()['status'] == 'draft').length,
-          'Scheduled': docs
-              .where((doc) => doc.data()['status'] == 'scheduled')
-              .length,
-          'Failed': docs
-              .where((doc) => doc.data()['status'] == 'failed')
-              .length,
-        };
-        return CountGrid(counts: counts);
-      },
-    );
-  }
-}
-
-class CountGrid extends StatelessWidget {
-  const CountGrid({super.key, required this.counts});
-
-  final Map<String, int> counts;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      childAspectRatio: 2.3,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 8,
-      crossAxisSpacing: 8,
-      children: counts.entries.map((entry) {
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  entry.value.toString(),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                Text(
-                  entry.key,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Color(0xFF667085)),
-                ),
-              ],
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class ScheduledPostsList extends StatelessWidget {
-  const ScheduledPostsList({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!firebaseReady) {
-      return const EmptyState(message: 'No scheduled posts yet.');
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('posts')
-          .where('status', isEqualTo: 'scheduled')
-          .orderBy('scheduledAt')
-          .limit(5)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final docs = snapshot.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return const EmptyState(message: 'No scheduled posts yet.');
-        }
-        return Column(
-          children: docs.map((doc) => PostTile(data: doc.data())).toList(),
-        );
-      },
-    );
-  }
-}
-
-class RecentPostsList extends StatelessWidget {
-  const RecentPostsList({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!firebaseReady) {
-      return const EmptyState(message: 'No posts yet. Create your first post.');
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('posts')
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final docs = snapshot.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return const EmptyState(
-            message: 'No posts yet. Create your first post.',
-          );
-        }
-        return Column(
-          children: docs.map((doc) => PostTile(data: doc.data())).toList(),
-        );
-      },
-    );
-  }
-}
-
 class ComposeScreen extends StatefulWidget {
-  const ComposeScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
+  const ComposeScreen({super.key, required this.onSave});
 
-  final String uid;
-  final bool firebaseReady;
+  final ValueChanged<PostPreview> onSave;
 
   @override
   State<ComposeScreen> createState() => _ComposeScreenState();
@@ -1035,7 +667,6 @@ class _ComposeScreenState extends State<ComposeScreen> {
   final Set<String> _platforms = {'facebook'};
   XFile? _image;
   DateTime? _scheduledAt;
-  bool _isSaving = false;
 
   @override
   void dispose() {
@@ -1065,18 +696,18 @@ class _ComposeScreenState extends State<ComposeScreen> {
       initialTime: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))),
     );
     if (time == null) return;
-    setState(
-      () => _scheduledAt = DateTime(
+    setState(() {
+      _scheduledAt = DateTime(
         date.year,
         date.month,
         date.day,
         time.hour,
         time.minute,
-      ),
-    );
+      );
+    });
   }
 
-  Future<void> _save(String status) async {
+  void _save(String status) {
     if (_caption.text.trim().isEmpty && _image == null) {
       AppMessenger.show(
         'Add a caption or image first.',
@@ -1084,53 +715,21 @@ class _ComposeScreenState extends State<ComposeScreen> {
       );
       return;
     }
-    if (!widget.firebaseReady) {
-      AppMessenger.show(
-        'Firebase config is required before saving posts.',
-        kind: SnackBarKind.info,
-      );
-      return;
-    }
 
-    setState(() => _isSaving = true);
-    try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.uid)
-          .collection('posts')
-          .add({
-            'userId': widget.uid,
-            'caption': _caption.text.trim(),
-            'platforms': _platforms.toList(),
-            'imageUrl': null,
-            'imagePublicId': null,
-            'mediaProvider': _image == null ? null : 'pending_cloudinary',
-            'mediaStatus': _image == null ? 'none' : 'local_selected',
-            'status': status,
-            'approvalStatus': 'not_required',
-            'publishStatus': status == 'published' ? 'pending' : 'not_started',
-            'scheduledAt': _scheduledAt == null
-                ? null
-                : Timestamp.fromDate(_scheduledAt!),
-            'publishedAt': null,
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'errorMessage': null,
-            'facebookPostId': null,
-            'instagramMediaId': null,
-            'instagramPublishId': null,
-          });
-      _caption.clear();
-      setState(() {
-        _image = null;
-        _scheduledAt = null;
-      });
-      AppMessenger.show('Post saved.', kind: SnackBarKind.success);
-    } catch (error) {
-      AppMessenger.show('Unable to save post.', kind: SnackBarKind.error);
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
+    widget.onSave(
+      PostPreview(
+        caption: _caption.text.trim(),
+        platforms: _platforms.toList(),
+        status: status,
+        imagePath: _image?.path,
+        scheduledAt: _scheduledAt,
+      ),
+    );
+    _caption.clear();
+    setState(() {
+      _image = null;
+      _scheduledAt = null;
+    });
   }
 
   @override
@@ -1143,6 +742,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const BackendNotice(),
+          const SizedBox(height: 16),
           TextField(
             controller: _caption,
             minLines: 5,
@@ -1157,11 +758,11 @@ class _ComposeScreenState extends State<ComposeScreen> {
           const SizedBox(height: 8),
           PlatformSelector(
             selected: _platforms,
-            onChanged: (next) => setState(
-              () => _platforms
+            onChanged: (next) => setState(() {
+              _platforms
                 ..clear()
-                ..addAll(next),
-            ),
+                ..addAll(next);
+            }),
           ),
           const SizedBox(height: 16),
           OutlinedButton.icon(
@@ -1188,21 +789,15 @@ class _ComposeScreenState extends State<ComposeScreen> {
           ),
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: _isSaving ? null : () => _save('scheduled'),
+            onPressed: () => _save('scheduled'),
             icon: const Icon(Icons.calendar_month_outlined),
             label: const Text('Schedule post'),
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
-            onPressed: _isSaving ? null : () => _save('draft'),
+            onPressed: () => _save('draft'),
             icon: const Icon(Icons.save_outlined),
             label: const Text('Save draft'),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: _isSaving ? null : () => _save('queued'),
-            icon: const Icon(Icons.publish_outlined),
-            label: const Text('Publish now'),
           ),
         ],
       ),
@@ -1254,14 +849,9 @@ class PlatformSelector extends StatelessWidget {
 }
 
 class CalendarScreen extends StatelessWidget {
-  const CalendarScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
+  const CalendarScreen({super.key, required this.posts});
 
-  final String uid;
-  final bool firebaseReady;
+  final List<PostPreview> posts;
 
   @override
   Widget build(BuildContext context) {
@@ -1272,7 +862,10 @@ class CalendarScreen extends StatelessWidget {
         children: [
           SectionHeader(title: 'Scheduled posts'),
           const SizedBox(height: 8),
-          ScheduledPostsList(uid: uid, firebaseReady: firebaseReady),
+          PostList(
+            posts: posts.where((post) => post.status == 'scheduled').toList(),
+            emptyMessage: 'No scheduled posts yet.',
+          ),
         ],
       ),
     );
@@ -1280,14 +873,9 @@ class CalendarScreen extends StatelessWidget {
 }
 
 class AnalyticsScreen extends StatelessWidget {
-  const AnalyticsScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
+  const AnalyticsScreen({super.key, required this.posts});
 
-  final String uid;
-  final bool firebaseReady;
+  final List<PostPreview> posts;
 
   @override
   Widget build(BuildContext context) {
@@ -1296,11 +884,20 @@ class AnalyticsScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          PostCounts(uid: uid, firebaseReady: firebaseReady),
+          CountGrid(
+            counts: {
+              'Posts': posts.length,
+              'Drafts': posts.where((post) => post.status == 'draft').length,
+              'Scheduled': posts
+                  .where((post) => post.status == 'scheduled')
+                  .length,
+              'Failed': posts.where((post) => post.status == 'failed').length,
+            },
+          ),
           const SizedBox(height: 16),
           const EmptyState(
             message:
-                'No published post analytics yet. Real Meta insights will appear after publishing is connected.',
+                'Analytics will use backend publishing history after API integration.',
           ),
         ],
       ),
@@ -1311,18 +908,12 @@ class AnalyticsScreen extends StatelessWidget {
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     super.key,
-    required this.uid,
-    required this.firebaseReady,
+    required this.session,
+    required this.onLogout,
   });
 
-  final String uid;
-  final bool firebaseReady;
-
-  Future<void> _logout() async {
-    if (firebaseReady) {
-      await FirebaseAuth.instance.signOut();
-    }
-  }
+  final AppSession session;
+  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -1333,129 +924,26 @@ class SettingsScreen extends StatelessWidget {
         children: [
           SectionHeader(title: 'Connected accounts'),
           const SizedBox(height: 8),
-          ConnectAccountActionCard(
+          const ConnectAccountActionCard(
             platform: 'facebook',
             title: 'Facebook',
-            subtitle: 'Connection flow pending Meta OAuth setup',
+            subtitle: 'Meta OAuth will be handled by the NestJS backend.',
             active: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ConnectAccountsScreen(
-                  uid: uid,
-                  firebaseReady: firebaseReady,
-                ),
-              ),
-            ),
           ),
           const SizedBox(height: 8),
-          ConnectAccountActionCard(
+          const ConnectAccountActionCard(
             platform: 'instagram',
             title: 'Instagram',
-            subtitle: 'Connection flow pending Meta OAuth setup',
+            subtitle: 'Instagram Business publishing comes after Meta OAuth.',
             active: true,
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ConnectAccountsScreen(
-                  uid: uid,
-                  firebaseReady: firebaseReady,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          const ConnectAccountActionCard(
-            platform: 'linkedin',
-            title: 'LinkedIn',
-            subtitle: 'Coming soon',
-            active: false,
           ),
           const SizedBox(height: 16),
-          if (kDebugMode) DevStatusCard(uid: uid, firebaseReady: firebaseReady),
+          if (kDebugMode) DevStatusCard(session: session),
           const SizedBox(height: 16),
           OutlinedButton.icon(
-            onPressed: _logout,
+            onPressed: onLogout,
             icon: const Icon(Icons.logout),
             label: const Text('Log out'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class ConnectAccountsScreen extends StatelessWidget {
-  const ConnectAccountsScreen({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
-
-  final String uid;
-  final bool firebaseReady;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppPage(
-      title: 'Connect accounts',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ConnectedAccountsSummary(uid: uid, firebaseReady: firebaseReady),
-          const SizedBox(height: 16),
-          SectionHeader(title: 'Priority platforms'),
-          const SizedBox(height: 8),
-          ConnectAccountActionCard(
-            platform: 'facebook',
-            title: 'Facebook Page',
-            subtitle:
-                'Meta OAuth and Page selection are the next backend step.',
-            active: true,
-            onPressed: () => AppMessenger.show(
-              'Next: add Firebase Functions for Meta OAuth.',
-              kind: SnackBarKind.info,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ConnectAccountActionCard(
-            platform: 'instagram',
-            title: 'Instagram Business',
-            subtitle:
-                'Needs a linked Facebook Page before publishing can work.',
-            active: true,
-            onPressed: () => AppMessenger.show(
-              'Instagram connects after Meta OAuth is wired.',
-              kind: SnackBarKind.info,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SectionHeader(title: 'Coming soon'),
-          const SizedBox(height: 8),
-          const ConnectAccountActionCard(
-            platform: 'linkedin',
-            title: 'LinkedIn',
-            subtitle: 'Planned after Facebook and Instagram.',
-            active: false,
-          ),
-          const SizedBox(height: 8),
-          const ConnectAccountActionCard(
-            platform: 'x',
-            title: 'X',
-            subtitle: 'Planned after Facebook and Instagram.',
-            active: false,
-          ),
-          const SizedBox(height: 8),
-          const ConnectAccountActionCard(
-            platform: 'tiktok',
-            title: 'TikTok',
-            subtitle: 'Planned after Facebook and Instagram.',
-            active: false,
-          ),
-          const SizedBox(height: 8),
-          const ConnectAccountActionCard(
-            platform: 'youtube',
-            title: 'YouTube',
-            subtitle: 'Planned after Facebook and Instagram.',
-            active: false,
           ),
         ],
       ),
@@ -1470,14 +958,12 @@ class ConnectAccountActionCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.active,
-    this.onPressed,
   });
 
   final String platform;
   final String title;
   final String subtitle;
   final bool active;
-  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1493,7 +979,12 @@ class ConnectAccountActionCard extends StatelessWidget {
         subtitle: Text(subtitle),
         trailing: IconButton(
           tooltip: active ? 'Connect' : 'Coming soon',
-          onPressed: active ? onPressed : null,
+          onPressed: active
+              ? () => AppMessenger.show(
+                  'Social account connection API is next.',
+                  kind: SnackBarKind.info,
+                )
+              : null,
           icon: const Icon(Icons.link_outlined),
         ),
       ),
@@ -1502,14 +993,9 @@ class ConnectAccountActionCard extends StatelessWidget {
 }
 
 class DevStatusCard extends StatelessWidget {
-  const DevStatusCard({
-    super.key,
-    required this.uid,
-    required this.firebaseReady,
-  });
+  const DevStatusCard({super.key, required this.session});
 
-  final String uid;
-  final bool firebaseReady;
+  final AppSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -1524,19 +1010,12 @@ class DevStatusCard extends StatelessWidget {
               style: TextStyle(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            StatusRow(
-              label: 'Firebase',
-              value: firebaseReady ? 'Connected' : 'Needs config',
-            ),
-            StatusRow(label: 'Auth user ID', value: uid),
-            const StatusRow(
-              label: 'Firestore',
-              value: 'Ready after Firebase config',
-            ),
-            const StatusRow(label: 'Cloudinary', value: 'Pending'),
-            const StatusRow(label: 'Meta config', value: 'Pending'),
-            const StatusRow(label: 'Facebook', value: 'Pending'),
-            const StatusRow(label: 'Instagram', value: 'Pending'),
+            StatusRow(label: 'Auth provider', value: 'NestJS API pending'),
+            StatusRow(label: 'User ID', value: session.userId),
+            StatusRow(label: 'Workspace', value: session.workspaceName),
+            const StatusRow(label: 'PostgreSQL', value: 'Backend setup next'),
+            const StatusRow(label: 'Storage', value: 'MinIO/local backend'),
+            const StatusRow(label: 'Firebase', value: 'Removed from mobile'),
           ],
         ),
       ),
@@ -1618,6 +1097,48 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
+class CountGrid extends StatelessWidget {
+  const CountGrid({super.key, required this.counts});
+
+  final Map<String, int> counts;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisCount: 2,
+      childAspectRatio: 2.3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      children: counts.entries.map((entry) {
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  entry.value.toString(),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  entry.key,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFF667085)),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
 class EmptyState extends StatelessWidget {
   const EmptyState({super.key, required this.message});
 
@@ -1646,40 +1167,58 @@ class EmptyState extends StatelessWidget {
   }
 }
 
-class PostTile extends StatelessWidget {
-  const PostTile({super.key, required this.data});
+class PostList extends StatelessWidget {
+  const PostList({super.key, required this.posts, required this.emptyMessage});
 
-  final Map<String, dynamic> data;
+  final List<PostPreview> posts;
+  final String emptyMessage;
 
   @override
   Widget build(BuildContext context) {
-    final platforms = (data['platforms'] as List<dynamic>? ?? [])
-        .cast<String>();
-    final scheduledAt = data['scheduledAt'];
-    final date = scheduledAt is Timestamp
-        ? DateFormat('MMM d, h:mm a').format(scheduledAt.toDate())
-        : null;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: const Color(0xFFEAF2FF),
-            child: Icon(
-              platforms.isEmpty ? Icons.public : platformIcon(platforms.first),
-              color: const Color(0xFF1877F2),
+    if (posts.isEmpty) return EmptyState(message: emptyMessage);
+    return Column(
+      children: posts
+          .map(
+            (post) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: PostTile(post: post),
             ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class PostTile extends StatelessWidget {
+  const PostTile({super.key, required this.post});
+
+  final PostPreview post;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = post.scheduledAt == null
+        ? null
+        : DateFormat('MMM d, h:mm a').format(post.scheduledAt!);
+
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: const Color(0xFFEAF2FF),
+          child: Icon(
+            post.platforms.isEmpty
+                ? Icons.public
+                : platformIcon(post.platforms.first),
+            color: const Color(0xFF1877F2),
           ),
-          title: Text(
-            data['caption'] as String? ?? 'Untitled post',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            [data['status'] as String? ?? 'draft', ?date].join(' • '),
-            overflow: TextOverflow.ellipsis,
-          ),
+        ),
+        title: Text(
+          post.caption.isEmpty ? 'Media post' : post.caption,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          [post.status, ?date].join(' • '),
+          overflow: TextOverflow.ellipsis,
         ),
       ),
     );
