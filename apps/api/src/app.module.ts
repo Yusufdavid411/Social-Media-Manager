@@ -9,6 +9,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { CalendarModule } from './modules/calendar/calendar.module';
 import { CleanupModule } from './modules/cleanup/cleanup.module';
 import { DatabaseModule } from './modules/database/database.module';
+import { HealthModule } from './modules/health/health.module';
 import { MediaModule } from './modules/media/media.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PostComposerModule } from './modules/post-composer/post-composer.module';
@@ -33,6 +34,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
       }),
     }),
     ScheduleModule.forRoot(),
+    HealthModule,
     DatabaseModule,
     AuditModule,
     AuthModule,
