@@ -45,6 +45,7 @@ migrate_working_dir/
 # Local media development storage
 .local-storage/
 tmp/
+tools/
 
 # Symbolication related
 app.*.symbols
