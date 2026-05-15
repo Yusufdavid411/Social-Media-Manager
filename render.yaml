@@ -26,6 +26,7 @@ services:
       - key: STORAGE_DRIVER
         value: minio
       - key: MINIO_ENDPOINT
+        # Backblaze B2 EU Central example: s3.eu-central-003.backblazeb2.com
         sync: false
       - key: MINIO_PORT
         sync: false
