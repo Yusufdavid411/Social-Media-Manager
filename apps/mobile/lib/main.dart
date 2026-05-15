@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
@@ -100,14 +102,107 @@ class AppSession {
   const AppSession({
     required this.userId,
     required this.email,
+    required this.accessToken,
     required this.workspaceId,
     required this.workspaceName,
+    required this.workspaceSlug,
   });
 
   final String userId;
   final String email;
+  final String accessToken;
   final String workspaceId;
   final String workspaceName;
+  final String workspaceSlug;
+}
+
+class ApiClient {
+  static const baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://social-media-manager-api-ygec.onrender.com',
+  );
+
+  final http.Client _client = http.Client();
+
+  Future<AppSession> login({
+    required String email,
+    required String password,
+  }) async {
+    final response = await _post('/auth/login', {
+      'email': email,
+      'password': password,
+    });
+
+    return _sessionFromJson(response);
+  }
+
+  Future<AppSession> register({
+    required String displayName,
+    required String email,
+    required String password,
+  }) async {
+    final response = await _post('/auth/register', {
+      'displayName': displayName,
+      'email': email,
+      'password': password,
+      'workspaceName': displayName.trim().isEmpty
+          ? 'Personal Workspace'
+          : '${displayName.trim()} Workspace',
+    });
+
+    return _sessionFromJson(response);
+  }
+
+  Future<Map<String, dynamic>> _post(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final response = await _client
+        .post(
+          uri,
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    final decoded = response.body.isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final message = decoded['message'];
+      throw ApiException(
+        message is List ? message.join('\n') : message?.toString(),
+      );
+    }
+
+    return decoded;
+  }
+
+  AppSession _sessionFromJson(Map<String, dynamic> json) {
+    final user = json['user'] as Map<String, dynamic>;
+    final workspaces = json['workspaces'] as List<dynamic>;
+    final workspace = workspaces.first as Map<String, dynamic>;
+
+    return AppSession(
+      userId: user['id'] as String,
+      email: user['email'] as String,
+      accessToken: json['accessToken'] as String,
+      workspaceId: workspace['id'] as String,
+      workspaceName: workspace['name'] as String,
+      workspaceSlug: workspace['slug'] as String,
+    );
+  }
+}
+
+class ApiException implements Exception {
+  const ApiException([this.message]);
+
+  final String? message;
+
+  @override
+  String toString() => message ?? 'Something went wrong. Please try again.';
 }
 
 class AppMessenger {
@@ -147,6 +242,8 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _api = ApiClient();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -155,35 +252,47 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _previewLogin() {
-    widget.onAuthenticated(
-      AppSession(
-        userId: 'api-preview-user',
-        email: _email.text.trim().isEmpty
-            ? 'preview@socialmanager.local'
-            : _email.text.trim(),
-        workspaceId: 'api-preview-workspace',
-        workspaceName: 'Personal Workspace',
-      ),
-    );
-    AppMessenger.show(
-      'Preview session started. API auth wiring is next.',
-      kind: SnackBarKind.info,
-    );
+  Future<void> _login() async {
+    if (_email.text.trim().isEmpty || _password.text.isEmpty) {
+      AppMessenger.show(
+        'Enter your email and password.',
+        kind: SnackBarKind.info,
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final session = await _api.login(
+        email: _email.text.trim(),
+        password: _password.text,
+      );
+      if (!mounted) return;
+      widget.onAuthenticated(session);
+      AppMessenger.show('Logged in successfully.', kind: SnackBarKind.success);
+    } on ApiException catch (error) {
+      AppMessenger.show(error.toString(), kind: SnackBarKind.error);
+    } catch (_) {
+      AppMessenger.show(
+        'Could not reach the API. Check your internet and try again.',
+        kind: SnackBarKind.error,
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return AuthFrame(
       title: 'Welcome back',
-      subtitle: 'The mobile app is ready for the NestJS API auth connection.',
+      subtitle: 'Log in with your Social Media Manager account.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const BackendNotice(),
-          const SizedBox(height: 16),
           TextField(
             controller: _email,
+            enabled: !_loading,
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(labelText: 'Email'),
@@ -191,11 +300,15 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _password,
+            enabled: !_loading,
             obscureText: true,
             decoration: const InputDecoration(labelText: 'Password'),
           ),
           const SizedBox(height: 18),
-          FilledButton(onPressed: _previewLogin, child: const Text('Log in')),
+          FilledButton(
+            onPressed: _loading ? null : _login,
+            child: Text(_loading ? 'Logging in...' : 'Log in'),
+          ),
           const SizedBox(height: 10),
           TextButton(
             onPressed: () => Navigator.of(context).push(
@@ -233,6 +346,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _api = ApiClient();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -242,54 +357,74 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  void _previewRegister() {
-    widget.onAuthenticated(
-      AppSession(
-        userId: 'api-preview-user',
-        email: _email.text.trim().isEmpty
-            ? 'preview@socialmanager.local'
-            : _email.text.trim(),
-        workspaceId: 'api-preview-workspace',
-        workspaceName: 'Personal Workspace',
-      ),
-    );
-    Navigator.of(context).pop();
-    AppMessenger.show(
-      'Preview account opened. Real registration will call the NestJS API.',
-      kind: SnackBarKind.info,
-    );
+  Future<void> _register() async {
+    if (_name.text.trim().isEmpty ||
+        _email.text.trim().isEmpty ||
+        _password.text.isEmpty) {
+      AppMessenger.show(
+        'Enter your name, email, and password.',
+        kind: SnackBarKind.info,
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final session = await _api.register(
+        displayName: _name.text.trim(),
+        email: _email.text.trim(),
+        password: _password.text,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      widget.onAuthenticated(session);
+      AppMessenger.show(
+        'Account created successfully.',
+        kind: SnackBarKind.success,
+      );
+    } on ApiException catch (error) {
+      AppMessenger.show(error.toString(), kind: SnackBarKind.error);
+    } catch (_) {
+      AppMessenger.show(
+        'Could not reach the API. Check your internet and try again.',
+        kind: SnackBarKind.error,
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return AuthFrame(
       title: 'Create account',
-      subtitle: 'Next we will connect this form to PostgreSQL-backed auth.',
+      subtitle: 'Create your account and workspace.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const BackendNotice(),
-          const SizedBox(height: 16),
           TextField(
             controller: _name,
+            enabled: !_loading,
             decoration: const InputDecoration(labelText: 'Full name'),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _email,
+            enabled: !_loading,
             keyboardType: TextInputType.emailAddress,
             decoration: const InputDecoration(labelText: 'Email'),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _password,
+            enabled: !_loading,
             obscureText: true,
             decoration: const InputDecoration(labelText: 'Password'),
           ),
           const SizedBox(height: 18),
           FilledButton(
-            onPressed: _previewRegister,
-            child: const Text('Register'),
+            onPressed: _loading ? null : _register,
+            child: Text(_loading ? 'Creating account...' : 'Register'),
           ),
         ],
       ),
@@ -1010,11 +1145,12 @@ class DevStatusCard extends StatelessWidget {
               style: TextStyle(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
-            StatusRow(label: 'Auth provider', value: 'NestJS API pending'),
+            const StatusRow(label: 'Auth provider', value: 'NestJS API'),
             StatusRow(label: 'User ID', value: session.userId),
             StatusRow(label: 'Workspace', value: session.workspaceName),
-            const StatusRow(label: 'PostgreSQL', value: 'Backend setup next'),
-            const StatusRow(label: 'Storage', value: 'MinIO/local backend'),
+            StatusRow(label: 'Workspace slug', value: session.workspaceSlug),
+            const StatusRow(label: 'PostgreSQL', value: 'Render hosted'),
+            const StatusRow(label: 'Storage', value: 'Backblaze B2'),
             const StatusRow(label: 'Firebase', value: 'Removed from mobile'),
           ],
         ),
