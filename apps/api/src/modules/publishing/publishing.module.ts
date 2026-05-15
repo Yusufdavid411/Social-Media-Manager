@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { PUBLISHING_QUEUE } from '../../common/constants/queues';
+import { AuditModule } from '../audit/audit.module';
 import { CalendarModule } from '../calendar/calendar.module';
 import { PublishingProcessor } from './publishing.processor';
 import { PublishingService } from './publishing.service';
@@ -8,6 +9,7 @@ import { PublishingService } from './publishing.service';
 @Module({
   imports: [
     BullModule.registerQueue({ name: PUBLISHING_QUEUE }),
+    AuditModule,
     CalendarModule,
   ],
   providers: [PublishingService, PublishingProcessor],
