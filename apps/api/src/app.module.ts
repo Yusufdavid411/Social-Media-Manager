@@ -19,6 +19,27 @@ import { SocialAccountsModule } from './modules/social-accounts/social-accounts.
 import { UsersModule } from './modules/users/users.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
+function buildRedisConnection(config: ConfigService) {
+  const redisUrl = config.get<string>('REDIS_URL');
+
+  if (redisUrl) {
+    const url = new URL(redisUrl);
+
+    return {
+      host: url.hostname,
+      port: Number(url.port || 6379),
+      username: url.username || undefined,
+      password: url.password || undefined,
+      tls: url.protocol === 'rediss:' ? {} : undefined,
+    };
+  }
+
+  return {
+    host: config.get<string>('REDIS_HOST') ?? 'localhost',
+    port: Number(config.get<string>('REDIS_PORT') ?? 6379),
+  };
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -27,10 +48,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('REDIS_HOST') ?? 'localhost',
-          port: config.get<number>('REDIS_PORT') ?? 6379,
-        },
+        connection: buildRedisConnection(config),
       }),
     }),
     ScheduleModule.forRoot(),

@@ -13,9 +13,11 @@ export class MinioStorageService extends StorageService {
   constructor(config: ConfigService) {
     super();
     this.bucket = config.get<string>('MINIO_BUCKET') ?? 'social-media-manager-media';
+    const configuredPort = config.get<string>('MINIO_PORT');
+
     this.client = new Client({
       endPoint: config.get<string>('MINIO_ENDPOINT') ?? 'localhost',
-      port: config.get<number>('MINIO_PORT') ?? 9000,
+      port: configuredPort ? Number(configuredPort) : undefined,
       useSSL: config.get<string>('MINIO_USE_SSL') === 'true',
       accessKey: config.get<string>('MINIO_ACCESS_KEY') ?? 'minioadmin',
       secretKey: config.get<string>('MINIO_SECRET_KEY') ?? 'minioadmin',

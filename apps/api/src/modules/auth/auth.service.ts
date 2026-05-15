@@ -10,6 +10,7 @@ import {
   SubscriptionPlanCode,
   WorkspaceRole,
 } from '../../../generated/prisma/enums';
+import type { Workspace, WorkspaceMember } from '../../../generated/prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { LoginDto } from './dto/login.dto';
@@ -128,12 +129,14 @@ export class AuthService {
         email: user.email,
         displayName: user.displayName,
       },
-      workspaces: user.memberships.map((membership) => ({
-        id: membership.workspace.id,
-        name: membership.workspace.name,
-        slug: membership.workspace.slug,
-        role: membership.role,
-      })),
+      workspaces: user.memberships.map(
+        (membership: WorkspaceMember & { workspace: Workspace }) => ({
+          id: membership.workspace.id,
+          name: membership.workspace.name,
+          slug: membership.workspace.slug,
+          role: membership.role,
+        }),
+      ),
     };
   }
 
